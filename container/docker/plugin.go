@@ -38,7 +38,11 @@ type plugin struct{}
 func (p *plugin) InitializeFSContext(context *fs.Context) error {
 	SetTimeout(dockerClientTimeout)
 	// Try to connect to docker indefinitely on startup.
-	dockerStatus := retryDockerStatus()
+	dockerStatus, err := retryDockerStatus()
+	if err != nil {
+		klog.V(5).Infof("Docker not connected: %v", err)
+		return err
+	}
 	context.Docker = fs.DockerContext{
 		Root:         RootDir(),
 		Driver:       dockerStatus.Driver,
@@ -52,22 +56,21 @@ func (p *plugin) Register(factory info.MachineInfoFactory, fsInfo fs.FsInfo, inc
 	return nil, err
 }
 
-func retryDockerStatus() info.DockerStatus {
+func retryDockerStatus() (info.DockerStatus, error) {
 	startupTimeout := dockerClientTimeout
 	maxTimeout := 4 * startupTimeout
 	for {
 		ctx, _ := context.WithTimeout(context.Background(), startupTimeout)
 		dockerStatus, err := StatusWithContext(ctx)
 		if err == nil {
-			return dockerStatus
+			return dockerStatus, nil
 		}
 
 		switch err {
 		case context.DeadlineExceeded:
 			klog.Warningf("Timeout trying to communicate with docker during initialization, will retry")
 		default:
-			klog.V(5).Infof("Docker not connected: %v", err)
-			return info.DockerStatus{}
+			return info.DockerStatus{}, err
 		}
 
 		startupTimeout = 2 * startupTimeout
